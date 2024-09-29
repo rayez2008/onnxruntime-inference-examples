@@ -103,25 +103,26 @@ class MainActivity : AppCompatActivity() {
     }
 
     private inner class ImageAnalyzer : ImageAnalysis.Analyzer {
-
         override fun analyze(imageProxy: ImageProxy) {
-
-
-            // Process the image only if currentImageProxy is null
             if (currentImageProxy == null) {
                 currentImageProxy = imageProxy
 
-                // Convert ImageProxy to InputStream for detection
-                val inputStream = imageProxyToInputStream(imageProxy)
+                val jpegBytes = imageProxyToJpegByteArray(imageProxy)
+                val inputStream = ByteArrayInputStream(jpegBytes)
 
-                // Perform object detection
                 performObjectDetection(inputStream)
 
-                // Close the imageProxy after processing
                 imageProxy.close()
                 currentImageProxy = null
             }
         }
+    }
+
+    private fun imageProxyToJpegByteArray(imageProxy: ImageProxy): ByteArray {
+        val yuvImage = yuvToJpeg(imageProxy)
+        val outputStream = ByteArrayOutputStream()
+        yuvImage.compressToJpeg(Rect(0, 0, yuvImage.width, yuvImage.height), 100, outputStream)
+        return outputStream.toByteArray()
     }
 
     private fun imageProxyToInputStream(imageProxy: ImageProxy): InputStream {
@@ -196,13 +197,27 @@ class MainActivity : AppCompatActivity() {
         return resources.openRawResource(R.raw.classes).bufferedReader().readLines()
     }
 
-
-    fun performObjectDetection(inputStream: InputStream) {
-        var objDetector = ObjectDetector()
-        inputStream.reset()
-        var result = objDetector.detect(inputStream, ortEnv, ortSession)
-        updateUIWithDetectionResults(result);
+    private fun performObjectDetection(inputStream: InputStream) {
+        try {
+            val objDetector = ObjectDetector()
+            val result = objDetector.detect(inputStream, ortEnv, ortSession)
+            runOnUiThread {
+                updateUIWithDetectionResults(result)
+            }
+        } catch (e: Exception) {
+            Log.e(TAG, "Error during object detection", e)
+            runOnUiThread {
+                Toast.makeText(this, "Detection failed: ${e.message}", Toast.LENGTH_SHORT).show()
+            }
+        }
     }
+
+//    fun performObjectDetection(inputStream: InputStream) {
+//        var objDetector = ObjectDetector()
+//        inputStream.reset()
+//        var result = objDetector.detect(inputStream, ortEnv, ortSession)
+//        updateUIWithDetectionResults(result);
+//    }
 
     companion object {
         const val TAG = "ORTObjectDetection"
