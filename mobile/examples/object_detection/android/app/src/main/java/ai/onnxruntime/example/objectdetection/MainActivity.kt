@@ -112,7 +112,7 @@ class MainActivity : AppCompatActivity() {
                 currentImageProxy = imageProxy
 
                 // Convert ImageProxy to InputStream for detection
-                val inputStream = imageProxyToRGBInputStream(imageProxy)
+                val inputStream = imageProxyToInputStream(imageProxy)
 
                 // Perform object detection
                 performObjectDetection(inputStream)
@@ -124,22 +124,20 @@ class MainActivity : AppCompatActivity() {
         }
     }
 
-    // Convert ImageProxy to InputStream in RGB format, compatible with ObjectDetector
-    private fun imageProxyToRGBInputStream(imageProxy: ImageProxy): InputStream {
+    private fun imageProxyToInputStream(imageProxy: ImageProxy): InputStream {
+        // Convert ImageProxy (YUV) to JPEG format
+        val yuvImage = yuvToJpeg(imageProxy)
 
-        // Convert ImageProxy (YUV) to YuvImage (NV21)
-        val yuvImage = yuvToNv21(imageProxy)
-
-        // Convert YUV image to InputStream
+        // Convert YUV image to InputStream (JPEG format)
         val outputStream = ByteArrayOutputStream()
         yuvImage.compressToJpeg(android.graphics.Rect(0, 0, yuvImage.width, yuvImage.height), 100, outputStream)
 
-        // Return the resulting InputStream directly
-        return outputStream.toByteArray().inputStream()
+        // Return the resulting InputStream
+        return ByteArrayInputStream(outputStream.toByteArray())
     }
 
-    // Convert YUV ImageProxy to NV21 byte array and then to YuvImage
-    private fun yuvToNv21(imageProxy: ImageProxy): YuvImage {
+    // Convert YUV ImageProxy to JPEG using YuvImage
+    private fun yuvToJpeg(imageProxy: ImageProxy): YuvImage {
         val image = imageProxy.image ?: throw IllegalArgumentException("ImageProxy does not contain a valid image")
 
         val yBuffer: ByteBuffer = image.planes[0].buffer // Y
@@ -159,10 +157,9 @@ class MainActivity : AppCompatActivity() {
         vBuffer.get(nv21, ySize, vSize)
         uBuffer.get(nv21, ySize + vSize, uSize)
 
-        // Create YUV image from NV21 data
+        // Create YUV image from NV21 data and compress it to JPEG
         return YuvImage(nv21, ImageFormat.NV21, imageProxy.width, imageProxy.height, null)
     }
-
 
     private fun updateUIWithDetectionResults(result: Result) {
         // Create a mutable copy of the output bitmap for drawing
