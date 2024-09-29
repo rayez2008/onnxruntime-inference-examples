@@ -33,12 +33,14 @@ import android.Manifest
 import android.content.pm.PackageManager
 import android.widget.FrameLayout
 import androidx.core.app.ActivityCompat
+import java.nio.ByteBuffer
 
 
 class MainActivity : AppCompatActivity() {
     private var ortEnv: OrtEnvironment = OrtEnvironment.getEnvironment()
     private lateinit var ortSession: OrtSession
     private lateinit var previewView: PreviewView
+    private lateinit var outputImage: ImageView
     private var currentImageProxy: ImageProxy? = null
     private lateinit var classes: List<String>
 
@@ -49,6 +51,7 @@ class MainActivity : AppCompatActivity() {
         setContentView(R.layout.activity_main)
 
         previewView = findViewById(R.id.previewView)
+        outputImage = findViewById(R.id.imageView1)
         classes = readClasses()
 
         // Initialize Ort Session
@@ -100,14 +103,16 @@ class MainActivity : AppCompatActivity() {
     }
 
     private inner class ImageAnalyzer : ImageAnalysis.Analyzer {
-        @OptIn(ExperimentalGetImage::class)
+
         override fun analyze(imageProxy: ImageProxy) {
+
+
             // Process the image only if currentImageProxy is null
             if (currentImageProxy == null) {
                 currentImageProxy = imageProxy
 
                 // Convert ImageProxy to InputStream for detection
-                val inputStream = imageProxyToInputStream(imageProxy)
+                val inputStream = imageProxyToRGBInputStream(imageProxy)
 
                 // Perform object detection
                 performObjectDetection(inputStream)
@@ -119,28 +124,47 @@ class MainActivity : AppCompatActivity() {
         }
     }
 
-    private fun imageProxyToInputStream(imageProxy: ImageProxy): InputStream {
-        // Implement the conversion logic from ImageProxy to InputStream
-        val image = imageProxy.image ?: throw IllegalArgumentException("ImageProxy does not contain an image")
-        val planes = image.planes
-        val buffer = planes[0].buffer
-        val byteArray = ByteArray(buffer.remaining())
-        buffer.get(byteArray)
-        return ByteArrayInputStream(byteArray)
+    // Convert ImageProxy to InputStream in RGB format, compatible with ObjectDetector
+    private fun imageProxyToRGBInputStream(imageProxy: ImageProxy): InputStream {
+
+        // Convert ImageProxy (YUV) to YuvImage (NV21)
+        val yuvImage = yuvToNv21(imageProxy)
+
+        // Convert YUV image to InputStream
+        val outputStream = ByteArrayOutputStream()
+        yuvImage.compressToJpeg(android.graphics.Rect(0, 0, yuvImage.width, yuvImage.height), 100, outputStream)
+
+        // Return the resulting InputStream directly
+        return outputStream.toByteArray().inputStream()
     }
 
-    private fun performObjectDetection(inputStream: InputStream) {
-        try {
-            // Assuming you have an ObjectDetector class for detection
-            val objDetector = ObjectDetector()
-            val result = objDetector.detect(inputStream, ortEnv, ortSession)
-            updateUI(result)
-        } catch (e: Exception) {
-            Log.e(TAG, "Exception caught when performing object detection", e)
-        }
+    // Convert YUV ImageProxy to NV21 byte array and then to YuvImage
+    private fun yuvToNv21(imageProxy: ImageProxy): YuvImage {
+        val image = imageProxy.image ?: throw IllegalArgumentException("ImageProxy does not contain a valid image")
+
+        val yBuffer: ByteBuffer = image.planes[0].buffer // Y
+        val uBuffer: ByteBuffer = image.planes[1].buffer // U
+        val vBuffer: ByteBuffer = image.planes[2].buffer // V
+
+        val ySize = yBuffer.remaining()
+        val uSize = uBuffer.remaining()
+        val vSize = vBuffer.remaining()
+
+        val nv21 = ByteArray(ySize + uSize + vSize)
+
+        // Copy Y buffer to NV21 array
+        yBuffer.get(nv21, 0, ySize)
+
+        // Copy U and V buffer to NV21 array
+        vBuffer.get(nv21, ySize, vSize)
+        uBuffer.get(nv21, ySize + vSize, uSize)
+
+        // Create YUV image from NV21 data
+        return YuvImage(nv21, ImageFormat.NV21, imageProxy.width, imageProxy.height, null)
     }
 
-    private fun updateUI(result: Result) {
+
+    private fun updateUIWithDetectionResults(result: Result) {
         // Create a mutable copy of the output bitmap for drawing
         val mutableBitmap = result.outputBitmap.copy(Bitmap.Config.ARGB_8888, true)
 
@@ -151,40 +175,19 @@ class MainActivity : AppCompatActivity() {
         paint.strokeWidth = 5f // Bounding box stroke width
         paint.style = Paint.Style.STROKE // Draw only the outline
 
-        // Iterate over the output boxes and draw them on the canvas
-        for (box in result.outputBox) {
-            val left = box[0]
-            val top = box[1]
-            val right = box[0] + box[2]
-            val bottom = box[1] + box[3]
+        paint.textSize = 28f // Text Size
 
-            // Draw the bounding box
-            canvas.drawRect(left, top, right, bottom, paint)
+        paint.xfermode = PorterDuffXfermode(PorterDuff.Mode.SRC_OVER) // Text Overlapping Pattern
 
-            // Draw the label on the bounding box
-            paint.color = Color.WHITE // Text color
-            paint.textSize = 28f // Text size
-            val label = "Detected" // You can replace this with the actual class label
-            canvas.drawText(label, left, top - 10, paint) // Draw label above the box
+        canvas.drawBitmap(mutableBitmap, 0.0f, 0.0f, paint)
+        var boxit = result.outputBox.iterator()
+        while(boxit.hasNext()) {
+            var box_info = boxit.next()
+            canvas.drawText("%s:%.2f".format(classes[box_info[5].toInt()],box_info[4]),
+                box_info[0]-box_info[2]/2, box_info[1]-box_info[3]/2, paint)
         }
 
-        // Now update the overlay of the PreviewView
-        // Clear previous overlays
-        previewView.overlay.clear()
-
-        // Create a new ImageView to display the processed bitmap
-        val overlayView = ImageView(this)
-        overlayView.setImageBitmap(mutableBitmap)
-
-        // Make the overlay view match the preview view size
-        val layoutParams = FrameLayout.LayoutParams(
-            FrameLayout.LayoutParams.MATCH_PARENT,
-            FrameLayout.LayoutParams.MATCH_PARENT
-        )
-        overlayView.layoutParams = layoutParams
-
-        // Add the overlay view to the PreviewView
-        previewView.addView(overlayView)
+        outputImage.setImageBitmap(mutableBitmap)
     }
 
     private fun readModel(): ByteArray {
@@ -194,6 +197,14 @@ class MainActivity : AppCompatActivity() {
 
     private fun readClasses(): List<String> {
         return resources.openRawResource(R.raw.classes).bufferedReader().readLines()
+    }
+
+
+    fun performObjectDetection(inputStream: InputStream) {
+        var objDetector = ObjectDetector()
+        inputStream.reset()
+        var result = objDetector.detect(inputStream, ortEnv, ortSession)
+        updateUIWithDetectionResults(result);
     }
 
     companion object {
