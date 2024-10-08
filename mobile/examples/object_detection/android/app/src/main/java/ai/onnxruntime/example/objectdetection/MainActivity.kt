@@ -31,6 +31,7 @@ import java.util.concurrent.ExecutorService
 import java.util.concurrent.Executors
 import android.Manifest
 import android.content.pm.PackageManager
+import android.graphics.Matrix
 import android.widget.FrameLayout
 import androidx.core.app.ActivityCompat
 import java.nio.ByteBuffer
@@ -163,30 +164,45 @@ class MainActivity : AppCompatActivity() {
     }
 
     private fun updateUIWithDetectionResults(result: Result) {
-        // Create a mutable copy of the output bitmap for drawing
-        val mutableBitmap = result.outputBitmap.copy(Bitmap.Config.ARGB_8888, true)
+        // Rotate the output bitmap by 90 degrees
+        val matrix = Matrix()
+        matrix.postRotate(90f)
+        val rotatedBitmap = Bitmap.createBitmap(result.outputBitmap, 0, 0, result.outputBitmap.width, result.outputBitmap.height, matrix, true)
+
+        // Create a mutable copy of the rotated bitmap for drawing
+        val mutableBitmap = rotatedBitmap.copy(Bitmap.Config.ARGB_8888, true)
 
         // Create a canvas to draw on the mutable bitmap
         val canvas = Canvas(mutableBitmap)
+
+        // Rotate the canvas to align bounding boxes with the image
+        canvas.rotate(90f, (mutableBitmap.width / 2).toFloat(), (mutableBitmap.height / 2).toFloat())
+
         val paint = Paint()
         paint.color = Color.RED // Bounding box color
         paint.strokeWidth = 5f // Bounding box stroke width
         paint.style = Paint.Style.STROKE // Draw only the outline
+        paint.textSize = 28f // Text size
+        paint.xfermode = PorterDuffXfermode(PorterDuff.Mode.SRC_OVER) // Text overlapping pattern
 
-        paint.textSize = 28f // Text Size
+        // Draw bounding boxes and labels
+        result.outputBox.forEach { box_info ->
+            val left = box_info[0] - box_info[2] / 2
+            val top = box_info[1] - box_info[3] / 2
+            val right = box_info[0] + box_info[2] / 2
+            val bottom = box_info[1] + box_info[3] / 2
 
-        paint.xfermode = PorterDuffXfermode(PorterDuff.Mode.SRC_OVER) // Text Overlapping Pattern
+            // Draw the bounding box
+            canvas.drawRect(left, top, right, bottom, paint)
 
-        canvas.drawBitmap(mutableBitmap, 0.0f, 0.0f, paint)
-        var boxit = result.outputBox.iterator()
-        while(boxit.hasNext()) {
-            var box_info = boxit.next()
-            canvas.drawText("%s:%.2f".format(classes[box_info[5].toInt()],box_info[4]),
-                box_info[0]-box_info[2]/2, box_info[1]-box_info[3]/2, paint)
+            // Draw the label
+            canvas.drawText("%s:%.2f".format(classes[box_info[5].toInt()], box_info[4]), left, top - 10, paint)
         }
 
+        // Set the rotated and annotated bitmap to the ImageView
         outputImage.setImageBitmap(mutableBitmap)
     }
+
 
     private fun readModel(): ByteArray {
         val modelID = R.raw.yolov8n_with_pre_post_processing
@@ -201,14 +217,15 @@ class MainActivity : AppCompatActivity() {
         try {
             val objDetector = ObjectDetector()
             val result = objDetector.detect(inputStream, ortEnv, ortSession)
-            runOnUiThread {
-                updateUIWithDetectionResults(result)
-            }
+            updateUIWithDetectionResults(result)
+//            runOnUiThread {
+//                updateUIWithDetectionResults(result)
+//            }
         } catch (e: Exception) {
             Log.e(TAG, "Error during object detection", e)
-            runOnUiThread {
-                Toast.makeText(this, "Detection failed: ${e.message}", Toast.LENGTH_SHORT).show()
-            }
+//            runOnUiThread {
+//                Toast.makeText(this, "${e.cause}, ${e.message}", Toast.LENGTH_SHORT).show()
+//            }
         }
     }
 
